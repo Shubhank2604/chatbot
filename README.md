@@ -1,4 +1,4 @@
-# Data Discovery Assistant
+# Data Assistant
 
 An AI-powered data discovery assistant that ingests a curated data dictionary into a Chroma vector database, generates embeddings, and uses retrieval-augmented generation (RAG) to answer questions about available fields, definitions, feasibility, and data request scoping.
 
