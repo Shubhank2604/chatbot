@@ -1,137 +1,185 @@
 # Data Assistant
 
-An AI-powered data discovery assistant that ingests a curated data dictionary into a Chroma vector database, generates embeddings, and uses retrieval-augmented generation (RAG) to answer questions about available fields, definitions, feasibility, and data request scoping.
+A local RAG data-discovery chatbot built with Streamlit, Chroma, LangChain, and Ollama. The app ingests `source_file.csv`, stores local embeddings in Chroma, retrieves relevant fields for a user question, and uses a local Llama model to generate an answer.
 
-## What it does
+## What It Does
 
-- Loads a structured CSV data dictionary from the project root
-- Converts each row into a searchable document with metadata
-- Creates embeddings through an OpenAI-compatible API
-- Stores the embedded documents in a local Chroma database
-- Runs a Streamlit chat app for interactive question answering
-- Uses retrieval, reranking, and an LLM to return grounded responses
+- Reads a structured CSV data dictionary from the project root
+- Converts each CSV row into a LangChain `Document`
+- Creates embeddings with Ollama's local `nomic-embed-text` model
+- Stores embedded documents in a local Chroma vector database
+- Runs a Streamlit chatbot UI
+- Uses intent detection, query reformulation, query decomposition, vector retrieval, and grounded answer generation
+- Optionally supports cross-encoder reranking
 
-## Project structure
+## Project Structure
 
-- [app.py](c:\Users\shubhank.chandak\chatbot-backend\app.py): Streamlit chat application
-- [ingest.py](c:\Users\shubhank.chandak\chatbot-backend\ingest.py): data ingestion and Chroma DB builder
-- [run_sql.py](c:\Users\shubhank.chandak\chatbot-backend\run_sql.py): Chroma inspection and reset utility
-- `key.txt`: API key file used for embeddings and chat model access
-- `chroma_db/`: persisted local Chroma database
-- `*.csv`: source data dictionary used for ingestion
-
-## How it works
-
-1. A CSV file in the root folder contains field-level metadata such as column name, definition, common uses, examples, notes, and aliases.
-2. [ingest.py](c:\Users\shubhank.chandak\chatbot-backend\ingest.py) reads that file, converts each row into a LangChain `Document`, and writes the embeddings into `./chroma_db`.
-3. [app.py](c:\Users\shubhank.chandak\chatbot-backend\app.py) loads the vector store, reranker, and chat model.
-4. When a user asks a question, the app classifies intent, retrieves relevant documents from Chroma, reranks them, and generates a grounded answer in the chat UI.
+- `app.py` - Streamlit chatbot application
+- `ingest.py` - CSV ingestion and Chroma DB builder
+- `run_sql.py` - Chroma inspection and reset utility
+- `source_file.csv` - source data dictionary used for ingestion
+- `chroma_db/` - persisted local Chroma database created after ingestion
+- `.venv/` - local Python virtual environment
+- `key.txt` - optional only if using a remote OpenAI-compatible API instead of Ollama
 
 ## Requirements
 
 - Python 3.13 or compatible Python 3.x environment
-- A valid API key for the configured OpenAI-compatible endpoint
-- Network access for:
-  - embedding generation
-  - chat model calls
-  - first-time model download for the reranker
+- Ollama installed locally
+- The following Ollama models:
+  - `llama3.2`
+  - `nomic-embed-text`
 
-## Install dependencies
+No paid API key is required for the default local Ollama setup.
+
+## Install Python Dependencies
+
+From the project root:
 
 ```powershell
-py -m pip install streamlit langchain-core langchain-openai langchain-chroma sentence-transformers openai chromadb pandas
+.\.venv\Scripts\python.exe -m pip install -U streamlit pandas openai langchain-core langchain-openai langchain-chroma chromadb sentence-transformers
 ```
 
-## Configuration
+## Install Ollama Models
 
-Create a `key.txt` file in the project root and paste only the raw API key value into it.
+If `ollama` is on PATH:
 
-Expected layout:
+```powershell
+ollama pull llama3.2
+ollama pull nomic-embed-text
+```
+
+If PowerShell does not recognize `ollama`, use the full Windows path:
+
+```powershell
+& $env:LOCALAPPDATA\Programs\Ollama\ollama.exe pull llama3.2
+& $env:LOCALAPPDATA\Programs\Ollama\ollama.exe pull nomic-embed-text
+```
+
+You can verify the local Ollama API with:
+
+```powershell
+Invoke-WebRequest -Uri http://127.0.0.1:11434/api/tags -UseBasicParsing
+```
+
+## Default Configuration
+
+The app defaults to local Ollama:
 
 ```text
-project-root/
-  app.py
-  ingest.py
-  run_sql.py
-  key.txt
-  your_data_dictionary.csv
-  chroma_db/
+OPENAI_BASE_URL=http://localhost:11434/v1
+CHAT_MODEL=llama3.2
+EMBEDDING_MODEL=nomic-embed-text
+ENABLE_RERANKER=false
 ```
 
-## Ingest data
+The code uses Ollama's OpenAI-compatible API. For local Ollama, the app automatically uses a dummy API key value, so `key.txt` is not needed.
 
-Before running the app, build the local vector database:
+To use a different local model:
 
 ```powershell
-py ingest.py
+$env:CHAT_MODEL="llama3"
+```
+
+To enable the optional cross-encoder reranker:
+
+```powershell
+$env:ENABLE_RERANKER="true"
+```
+
+Reranking is disabled by default because first-time model loading can slow down or block a classroom demo. Vector retrieval still works without it.
+
+## Ingest Data
+
+Build the local Chroma database:
+
+```powershell
+.\.venv\Scripts\python.exe ingest.py
 ```
 
 Expected output:
 
 ```text
-Loading data from ...
-Processed <n> column definitions.
+Loading data from source_file.csv...
+Processed 74 column definitions.
 Initializing embedding client...
 Creating/Updating Vector Database...
 Success! Database created at ./chroma_db
 ```
 
-## Run the app
-
-Start the Streamlit UI with:
+Verify the document count:
 
 ```powershell
-py -m streamlit run app.py
+.\.venv\Scripts\python.exe run_sql.py count
 ```
 
-Do not run the app with `py app.py`. Streamlit apps need to be launched with `streamlit run` so session state and chat UI features work correctly.
+Expected output:
 
-## Inspect the local Chroma DB
+```text
+collection_count=74
+```
 
-Use [run_sql.py](c:\Users\shubhank.chandak\chatbot-backend\run_sql.py) to inspect the database:
+## Run The App
+
+Start Streamlit:
 
 ```powershell
-py run_sql.py count
-py run_sql.py collections
-py run_sql.py tables
-py run_sql.py table-counts
-py run_sql.py schema collections
-py run_sql.py sample collections --limit 5
-py run_sql.py query "select id, name from collections"
-py run_sql.py reset-db
+.\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Notes:
+Then open:
 
-- `count` shows the Chroma collection document count
-- `collections` lists available Chroma collections
-- `reset-db` deletes the local `chroma_db` folder for a clean rebuild
-- direct SQL edits are not recommended because Chroma manages its own internal schema
+```text
+http://localhost:8501
+```
 
-## Current retrieval pipeline
+Do not run the app with `python app.py`; Streamlit apps need to be launched with `streamlit run`.
 
-The chat application currently includes:
+## Inspect Chroma
 
-- intent detection for different query types
-- follow-up question reformulation
-- query decomposition for broader recall
-- vector retrieval with maximum marginal relevance (MMR)
-- cross-encoder reranking
-- grounded answer generation
-- optional source display
-- lightweight confidence signaling
+Useful commands:
 
-## Common workflow
+```powershell
+.\.venv\Scripts\python.exe run_sql.py count
+.\.venv\Scripts\python.exe run_sql.py collections
+.\.venv\Scripts\python.exe run_sql.py tables
+.\.venv\Scripts\python.exe run_sql.py table-counts
+.\.venv\Scripts\python.exe run_sql.py schema collections
+.\.venv\Scripts\python.exe run_sql.py sample collections --limit 5
+```
 
-1. Place the source CSV file in the project root.
-2. Add the API key to `key.txt`.
-3. Run `py ingest.py` to populate `chroma_db`.
-4. Run `py -m streamlit run app.py`.
-5. Ask questions in the browser UI.
+To delete the local Chroma database for a clean rebuild:
 
-## Known limitations
+```powershell
+.\.venv\Scripts\python.exe run_sql.py reset-db
+```
 
-- Re-running ingestion without clearing the DB may duplicate records, depending on how documents are added.
-- The app depends on external model and embedding APIs.
-- The SQLite files inside `chroma_db` are implementation details of Chroma and should not be edited manually.
+## Current Retrieval Pipeline
 
+1. User submits a question in the Streamlit chat UI.
+2. The app classifies the question intent.
+3. Follow-up questions are reformulated using chat history.
+4. Broad questions are decomposed into focused subqueries.
+5. Chroma performs maximum marginal relevance retrieval.
+6. Optional reranking can reorder candidates if `ENABLE_RERANKER=true`.
+7. Retrieved context is formatted and passed to the local Llama model.
+8. The answer is streamed back into the UI.
+9. A grounding check warns if the answer mentions field names not present in retrieved context.
+
+## Known Limitations
+
+- `source_file.csv` currently contains column names but blank definitions, examples, uses, notes, and aliases. The app can run, but answer quality will be limited until the CSV is enriched.
+- Re-running ingestion without resetting `chroma_db` may duplicate records.
+- Local Llama responses are free but may be slower and less capable than paid hosted models.
+- The reranker is disabled by default for demo reliability.
+- Chroma's SQLite files are implementation details and should not be edited manually.
+
+## Demo Checklist
+
+1. Confirm Ollama is running.
+2. Confirm `llama3.2` and `nomic-embed-text` are installed.
+3. Run ingestion.
+4. Verify `collection_count=74`.
+5. Start Streamlit.
+6. Open `http://localhost:8501`.
+7. Ask about a field present in `source_file.csv`, such as `UF_GPA`, `TERM_CD`, or `FIRST_GEN_IND`.
