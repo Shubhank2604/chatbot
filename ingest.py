@@ -7,27 +7,42 @@ from langchain_core.embeddings import Embeddings
 from openai import OpenAI
 
 # --- Configuration ---
-DATA_FILE = (
-    "student_columns_data_dictionary_rag_optimized.csv"  # <-- CSV file
-)
+DATA_FILE = "source_file.csv"
 DB_PATH = "./chroma_db"
-BASE_URL = "https://api.ai.it.ufl.edu/v1"
-EMBEDDING_MODEL = "text-embedding-3-large"
+BASE_URL = os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 
 
 def load_api_key(path: str = "key.txt") -> str:
+    key = os.getenv("OPENAI_API_KEY", "").strip()
+    if key:
+        return key
+
+    if BASE_URL.startswith("http://localhost:11434") or BASE_URL.startswith(
+        "http://127.0.0.1:11434"
+    ):
+        return "ollama"
+
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            "No API key found. Set OPENAI_API_KEY or create key.txt in the project folder."
+        )
+
     with open(path, "r", encoding="utf-8") as f:
         key = f.read().strip()
     if not key:
-        raise ValueError("key.txt is empty.")
+        raise ValueError("No API key found. Set OPENAI_API_KEY or fill key.txt.")
     return key
 
 
-class UFNavigatorsEmbeddings(Embeddings):
-    """LangChain Embeddings wrapper for UF Navigator OpenAI-compatible API."""
+class OpenAIEmbeddings(Embeddings):
+    """LangChain Embeddings wrapper for OpenAI or an OpenAI-compatible API."""
 
-    def __init__(self, api_key: str, base_url: str, model: str):
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+    def __init__(self, api_key: str, base_url: str | None, model: str):
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self.client = OpenAI(**client_kwargs)
         self.model = model
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
@@ -100,10 +115,10 @@ def load_and_process_data():
 
 
 def create_vector_db(documents):
-    print("Initializing UF Navigator embedding client...")
+    print("Initializing embedding client...")
     api_key = load_api_key("key.txt")
 
-    embeddings = UFNavigatorsEmbeddings(
+    embeddings = OpenAIEmbeddings(
         api_key=api_key,
         base_url=BASE_URL,
         model=EMBEDDING_MODEL,
