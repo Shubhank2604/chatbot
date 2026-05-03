@@ -34,12 +34,17 @@ from sentence_transformers import CrossEncoder
 # -------------------------------------------------
 # Configuration
 # -------------------------------------------------
-UF_BASE_URL = "https://api.ai.it.ufl.edu/v1"
-CHAT_MODEL = "gpt-4o"
-EMBEDDING_MODEL = "text-embedding-3-large"
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
+CHAT_MODEL = os.getenv("CHAT_MODEL", "llama3.2")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 CROSSENC_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 DB_PATH = "./chroma_db"
 KEY_FILE = "key.txt"
+ENABLE_RERANKER = os.getenv("ENABLE_RERANKER", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 # Retrieval defaults (intent-aware overrides happen at runtime)
 VECTOR_FETCH_K_DEFAULT = 50
@@ -60,25 +65,31 @@ SHOW_SOURCES_DEFAULT = False
 st.set_page_config(page_title="UF Data Discovery Assistant", layout="wide")
 
 # -------------------------------------------------
-# API key from key.txt
+# API key from environment or key.txt
 # -------------------------------------------------
-if not os.path.exists(KEY_FILE):
+api_key = os.getenv("OPENAI_API_KEY", "").strip()
+if not api_key and (
+    OPENAI_BASE_URL.startswith("http://localhost:11434")
+    or OPENAI_BASE_URL.startswith("http://127.0.0.1:11434")
+):
+    api_key = "ollama"
+if not api_key and os.path.exists(KEY_FILE):
+    with open(KEY_FILE) as f:
+        api_key = f.read().strip()
+
+if not api_key:
     st.error(
-        f"API Key file '{KEY_FILE}' not found. Please add it to the project folder."
+        "No API key found. Set OPENAI_API_KEY or add a key.txt file to the project folder."
     )
     st.stop()
 
-with open(KEY_FILE) as f:
-    api_key = f.read().strip()
 
-if not api_key:
-    st.error(f"'{KEY_FILE}' is empty. Please paste your UF AI Gateway key into it.")
-    st.stop()
-
-
-class UFNavigatorsEmbeddings(Embeddings):
-    def __init__(self, api_key: str, base_url: str, model: str):
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+class OpenAIEmbeddings(Embeddings):
+    def __init__(self, api_key: str, base_url: str | None, model: str):
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self.client = OpenAI(**client_kwargs)
         self.model = model
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
@@ -95,20 +106,22 @@ class UFNavigatorsEmbeddings(Embeddings):
 # -------------------------------------------------
 @st.cache_resource(show_spinner="Loading models and vector store...")
 def load_components():
-    embeddings = UFNavigatorsEmbeddings(
-        api_key=api_key, base_url=UF_BASE_URL, model=EMBEDDING_MODEL
+    embeddings = OpenAIEmbeddings(
+        api_key=api_key, base_url=OPENAI_BASE_URL, model=EMBEDDING_MODEL
     )
     vector_store = Chroma(persist_directory=DB_PATH, embedding_function=embeddings)
 
-    cross_encoder = CrossEncoder(CROSSENC_MODEL)
+    cross_encoder = CrossEncoder(CROSSENC_MODEL) if ENABLE_RERANKER else None
 
-    llm = ChatOpenAI(
-        model=CHAT_MODEL,
-        temperature=0,
-        api_key=api_key,
-        base_url=UF_BASE_URL,
-        streaming=True,
-    )
+    llm_kwargs = {
+        "model": CHAT_MODEL,
+        "temperature": 0,
+        "api_key": api_key,
+        "streaming": True,
+    }
+    if OPENAI_BASE_URL:
+        llm_kwargs["base_url"] = OPENAI_BASE_URL
+    llm = ChatOpenAI(**llm_kwargs)
 
     # Follow-up contextualization chain
     ctx_system = (
@@ -415,6 +428,9 @@ def _retrieve_and_rerank(
 
     if not candidates:
         return []
+
+    if cross_enc is None:
+        return candidates[: params["rerank_top_n"]]
 
     # Rerank: include column_name hint if present
     pairs = []
